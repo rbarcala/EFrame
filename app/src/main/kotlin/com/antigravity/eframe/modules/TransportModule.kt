@@ -21,7 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.antigravity.eframe.data.NextTrainsArrival
 import com.antigravity.eframe.data.SubteLineInfo
 import com.antigravity.eframe.data.TransportRepository
 import kotlinx.coroutines.delay
@@ -44,7 +45,7 @@ class TransportModule(
     private val getWaitingStation: () -> String = { "Palermo" },
     private val getDestination: () -> String = { "Congreso de Tucumán" },
     private val getIsDetailed: () -> Boolean = { true },
-    private val getUiScale: () -> Float = { 1.2f },
+    private val getUiScale: () -> Float = { 1.6f },
     override var isEnabled: Boolean = true
 ) : FrameModule {
 
@@ -65,16 +66,16 @@ class TransportModule(
                 ?: repository.getLineByName(getSelectedLine())
         }
 
-        var arrivalMinutes by remember { mutableIntStateOf(2) }
+        var arrivals by remember { mutableStateOf(NextTrainsArrival(2, 6)) }
 
         LaunchedEffect(getSelectedLine(), getWaitingStation(), getDestination()) {
             while (true) {
-                arrivalMinutes = repository.getEstimatedArrival(
+                arrivals = repository.getEstimatedArrivals(
                     lineName = getSelectedLine(),
                     stationName = getWaitingStation(),
                     destinationTerminal = getDestination()
                 )
-                delay(25000L) // Refresh ETA every 25 seconds
+                delay(20000L) // Refresh ETA every 20 seconds
             }
         }
 
@@ -148,12 +149,31 @@ class TransportModule(
                     }
                 }
 
-                Text(
-                    text = "Próximo tren: en $arrivalMinutes min",
-                    color = Color.White,
-                    fontSize = (13 * scale).sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                // Show both next train and the subsequent train
+                if (arrivals.isInterrupted) {
+                    Text(
+                        text = "⚠️ Servicio Interrumpido",
+                        color = Color(0xFFEF5350),
+                        fontSize = (13 * scale).sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Próximo: en ${arrivals.firstMinutes} min",
+                            color = Color(0xFF81C784),
+                            fontSize = (13 * scale).sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width((8 * scale).dp))
+                        Text(
+                            text = "• Siguiente: en ${arrivals.secondMinutes} min",
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = (12 * scale).sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
 
                 if (isDetailed) {
                     Text(

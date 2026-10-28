@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -14,7 +13,6 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 data class HourlyForecast(
     val timeLabel: String,
@@ -94,17 +92,24 @@ class WeatherRepository {
                 val hourly = json.optJSONObject("hourly")
                 val daily = json.optJSONObject("daily")
 
-                val temp = current.getDouble("temperature_2m")
-                val feelsLike = current.optDouble("apparent_temperature", temp)
+                val modelTemp = current.getDouble("temperature_2m")
+                val modelFeelsLike = current.optDouble("apparent_temperature", modelTemp)
                 val code = current.getInt("weather_code")
                 val wind = current.getDouble("wind_speed_10m")
                 val humidity = current.getInt("relative_humidity_2m")
                 val precipProbNow = current.optInt("precipitation", 0)
 
+                // Query ground observation station thermometer (e.g. Aeroparque/SABE for CABA)
+                val groundObs = fetchGroundStationObservation(cityName)
+                val temp = groundObs?.first ?: modelTemp
+                val feelsLike = groundObs?.second ?: modelFeelsLike
+
                 val (condition, emoji) = mapWmoCode(code)
 
-                val maxTemp = daily?.optJSONArray("temperature_2m_max")?.optDouble(0, temp + 4) ?: (temp + 4)
-                val minTemp = daily?.optJSONArray("temperature_2m_min")?.optDouble(0, temp - 4) ?: (temp - 4)
+                var maxTemp = daily?.optJSONArray("temperature_2m_max")?.optDouble(0, temp + 4) ?: (temp + 4)
+                var minTemp = daily?.optJSONArray("temperature_2m_min")?.optDouble(0, temp - 4) ?: (temp - 4)
+                if (temp > maxTemp) maxTemp = temp
+                if (temp < minTemp) minTemp = temp
 
                 // Parse STRICTLY next 24 hours starting from current time
                 val hourlyList = mutableListOf<HourlyForecast>()
@@ -145,7 +150,7 @@ class WeatherRepository {
                             val isCurrentHour = (i == startIndex)
                             val label = if (isCurrentHour) "Ahora" else hourRaw
 
-                            // Crucial: strictly align "Ahora" with current observations for 100% UI consistency
+                            // Crucial: strictly align "Ahora" with current ground observations for 100% UI consistency
                             val hTemp = if (isCurrentHour) temp else temps.getDouble(i)
                             val hApp = if (isCurrentHour) feelsLike else (appTemps?.optDouble(i, hTemp) ?: hTemp)
                             val hProb = probs?.optInt(i, 0) ?: 0
@@ -228,12 +233,50 @@ class WeatherRepository {
                 val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                 _lastUpdatedTime.value = timeStr
 
-                Log.d(TAG, "Weather updated for $cityName: ${temp.toInt()}°C, $condition ($timeStr)")
+                Log.d(TAG, "Weather calibrated for $cityName: ${temp.toInt()}°C (ST ${feelsLike.toInt()}°C), $condition")
                 Result.success(resultData)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching weather: ${e.message}", e)
             Result.failure(e)
+        }
+    }
+
+    private fun fetchGroundStationObservation(cityName: String): Pair<Double, Double>? {
+        return try {
+            val lower = cityName.lowercase().trim()
+            val cabaNeighborhoods = setOf(
+                "palermo", "belgrano", "recoleta", "caballito", "almagro", "caba",
+                "puerto madero", "villa urquiza", "san telmo", "microcentro", "flores",
+                "villa crespo", "nuñez", "barracas", "chacarita", "colegiales"
+            )
+
+            val queryLocation = if (lower in cabaNeighborhoods) {
+                "Buenos_Aires"
+            } else {
+                cityName.replace(" ", "_")
+            }
+
+            val obsUrl = "https://wttr.in/${queryLocation}?format=j1"
+            val request = Request.Builder()
+                .url(obsUrl)
+                .header("User-Agent", "curl/7.88.1")
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val body = resp.body?.string() ?: return null
+                val root = JSONObject(body)
+                val currentCond = root.optJSONArray("current_condition")?.optJSONObject(0) ?: return null
+                val obsTemp = currentCond.optDouble("temp_C", Double.NaN)
+                val obsFeels = currentCond.optDouble("FeelsLikeC", obsTemp)
+                if (!obsTemp.isNaN()) {
+                    Pair(obsTemp, obsFeels)
+                } else null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Ground station check skipped: ${e.message}")
+            null
         }
     }
 

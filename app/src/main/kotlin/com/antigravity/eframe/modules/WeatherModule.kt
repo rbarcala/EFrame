@@ -37,7 +37,7 @@ class WeatherModule(
     private val getLatitude: () -> Double = { -34.5889 },
     private val getLongitude: () -> Double = { -58.4305 },
     private val getIsDetailed: () -> Boolean = { true },
-    private val getUiScale: () -> Float = { 1.2f },
+    private val getUiScale: () -> Float = { 1.6f },
     override var isEnabled: Boolean = true
 ) : FrameModule {
 

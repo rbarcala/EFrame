@@ -16,7 +16,7 @@ data class FrameConfig(
     val isWeatherEnabled: Boolean = true,
     val isTransportEnabled: Boolean = true,
     val isDetailedMode: Boolean = true,
-    val uiScale: Float = 1.2f, // 1.0f Normal, 1.2f Grande, 1.4f Extra Grande
+    val uiScale: Float = 1.6f, // 1.0f a 2.2f
     val weatherCountry: String = "Argentina",
     val weatherProvince: String = "CABA (Buenos Aires)",
     val weatherCity: String = "Palermo",
@@ -45,7 +45,7 @@ class AppSettings(context: Context) {
             isWeatherEnabled = prefs.getBoolean(KEY_WEATHER_ENABLED, true),
             isTransportEnabled = prefs.getBoolean(KEY_TRANSPORT_ENABLED, true),
             isDetailedMode = prefs.getBoolean(KEY_DETAILED_MODE, true),
-            uiScale = prefs.getFloat(KEY_UI_SCALE, 1.2f),
+            uiScale = prefs.getFloat(KEY_UI_SCALE, 1.6f),
             weatherCountry = prefs.getString(KEY_WEATHER_COUNTRY, "Argentina") ?: "Argentina",
             weatherProvince = prefs.getString(KEY_WEATHER_PROVINCE, "CABA (Buenos Aires)") ?: "CABA (Buenos Aires)",
             weatherCity = prefs.getString(KEY_WEATHER_CITY, "Palermo") ?: "Palermo",

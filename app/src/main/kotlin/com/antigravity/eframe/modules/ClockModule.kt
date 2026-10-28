@@ -29,7 +29,7 @@ import java.util.Locale
 
 class ClockModule(
     private val getIsDetailed: () -> Boolean = { true },
-    private val getUiScale: () -> Float = { 1.2f },
+    private val getUiScale: () -> Float = { 1.6f },
     override var isEnabled: Boolean = true
 ) : FrameModule {
 

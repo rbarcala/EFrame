@@ -314,9 +314,11 @@ fun SettingsDialog(
                             ) {
                                 listOf(
                                     1.0f to "1.0x Normal",
-                                    1.2f to "1.2x Grande (Recomendado)",
-                                    1.4f to "1.4x Extra Grande",
-                                    1.6f to "1.6x Tablet Lejana"
+                                    1.3f to "1.3x Mediano",
+                                    1.6f to "1.6x Grande (Recomendado)",
+                                    1.8f to "1.8x Muy Grande",
+                                    2.0f to "2.0x Extra Grande",
+                                    2.2f to "2.2x Gigante"
                                 ).forEach { (scaleVal, label) ->
                                     FilterChip(
                                         selected = kotlin.math.abs(uiScale - scaleVal) < 0.05f,

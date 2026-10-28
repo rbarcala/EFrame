@@ -30,6 +30,12 @@ data class UpcomingTrain(
     val currentPositionText: String
 )
 
+data class NextTrainsArrival(
+    val firstMinutes: Int,
+    val secondMinutes: Int,
+    val isInterrupted: Boolean = false
+)
+
 data class DirectionSchedule(
     val terminalName: String,
     val trains: List<UpcomingTrain>
@@ -476,15 +482,31 @@ class TransportRepository {
         stationName: String,
         destinationTerminal: String
     ): Int = withContext(Dispatchers.IO) {
+        val arrivals = getEstimatedArrivals(lineName, stationName, destinationTerminal)
+        arrivals.firstMinutes
+    }
+
+    suspend fun getEstimatedArrivals(
+        lineName: String,
+        stationName: String,
+        destinationTerminal: String
+    ): NextTrainsArrival = withContext(Dispatchers.IO) {
         fetchLiveStatus(force = false)
 
         val line = getLineByName(lineName)
+        if (line.status.contains("interrumpid", ignoreCase = true)) {
+            return@withContext NextTrainsArrival(0, 0, isInterrupted = true)
+        }
+
         val stationIndex = line.stations.indexOfFirst { it.name.equals(stationName, ignoreCase = true) }
             .coerceAtLeast(0)
 
         val freq = line.frequencyMinutes.coerceAtLeast(2)
-        val seed = (System.currentTimeMillis() / 60000 + stationIndex) % freq
-        (seed.toInt() + 1).coerceAtLeast(1)
+        val currentMin = Calendar.getInstance().get(Calendar.MINUTE)
+        val first = ((currentMin + stationIndex) % freq) + 1
+        val second = first + freq
+
+        NextTrainsArrival(first, second, isInterrupted = false)
     }
 
     fun getUpcomingTrainsForDirections(
