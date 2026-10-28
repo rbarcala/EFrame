@@ -57,6 +57,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.antigravity.eframe.data.WeatherData
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun WeatherDetailModal(
@@ -181,7 +182,7 @@ fun WeatherDetailModal(
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "${weather.conditionText} • Actual ${weather.temperatureCelsius.toInt()}°C (ST: ${weather.feelsLikeCelsius.toInt()}°C)",
+                                    text = "${weather.conditionText} • Actual ${weather.temperatureCelsius.roundToInt()}°C (ST: ${weather.feelsLikeCelsius.roundToInt()}°C)",
                                     color = Color.White.copy(alpha = 0.7f),
                                     fontSize = 13.sp
                                 )
@@ -262,7 +263,7 @@ fun WeatherDetailModal(
                             modifier = Modifier.weight(1f),
                             icon = Icons.Default.WbSunny,
                             label = "T. Máx / Mín",
-                            value = "${weather.tempMax.toInt()}° / ${weather.tempMin.toInt()}°",
+                            value = "${weather.tempMax.roundToInt()}° / ${weather.tempMin.roundToInt()}°",
                             tint = Color(0xFFFFB74D)
                         )
                     }
@@ -329,7 +330,7 @@ fun WeatherDetailModal(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "${hour.tempCelsius.toInt()}°",
+                                        text = "${hour.tempCelsius.roundToInt()}°",
                                         color = Color.White,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold
@@ -345,7 +346,7 @@ fun WeatherDetailModal(
                                     } else {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "ST ${hour.feelsLikeCelsius.toInt()}°",
+                                            text = "ST ${hour.feelsLikeCelsius.roundToInt()}°",
                                             color = Color.White.copy(alpha = 0.5f),
                                             fontSize = 10.sp
                                         )
@@ -416,14 +417,14 @@ fun WeatherDetailModal(
 
                                     Row {
                                         Text(
-                                            text = "${day.tempMax.toInt()}°",
+                                            text = "${day.tempMax.roundToInt()}°",
                                             color = Color.White,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "${day.tempMin.toInt()}°",
+                                            text = "${day.tempMin.roundToInt()}°",
                                             color = Color.White.copy(alpha = 0.5f),
                                             fontSize = 14.sp
                                         )

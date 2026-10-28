@@ -30,6 +30,7 @@ import com.antigravity.eframe.data.WeatherData
 import com.antigravity.eframe.data.WeatherRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.roundToInt
 
 class WeatherModule(
     val repository: WeatherRepository = WeatherRepository(),
@@ -104,7 +105,7 @@ class WeatherModule(
                         modifier = Modifier.padding(end = (6 * scale).dp)
                     )
                     Text(
-                        text = "${data.temperatureCelsius.toInt()}°C",
+                        text = "${data.temperatureCelsius.roundToInt()}°C",
                         color = Color.White,
                         fontSize = (32 * scale).sp,
                         fontWeight = FontWeight.Bold
@@ -124,14 +125,14 @@ class WeatherModule(
                         modifier = Modifier.padding(top = (4 * scale).dp)
                     ) {
                         Text(
-                            text = "ST: ${data.feelsLikeCelsius.toInt()}°",
+                            text = "ST: ${data.feelsLikeCelsius.roundToInt()}°",
                             color = Color.White.copy(alpha = 0.8f),
                             fontSize = (11 * scale).sp,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.width((8 * scale).dp))
                         Text(
-                            text = "Max ${data.tempMax.toInt()}° / Min ${data.tempMin.toInt()}°",
+                            text = "Max ${data.tempMax.roundToInt()}° / Min ${data.tempMin.roundToInt()}°",
                             color = Color.White.copy(alpha = 0.8f),
                             fontSize = (11 * scale).sp
                         )

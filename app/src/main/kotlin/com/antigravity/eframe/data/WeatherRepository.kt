@@ -13,6 +13,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 data class HourlyForecast(
     val timeLabel: String,
@@ -68,11 +69,13 @@ class WeatherRepository {
         latitude: Double,
         longitude: Double
     ): Result<WeatherData> = withContext(Dispatchers.IO) {
+        // Use ECMWF IFS 0.25° (European Centre model, the gold standard used by Google Clima)
         val url = "https://api.open-meteo.com/v1/forecast?" +
                 "latitude=$latitude&longitude=$longitude" +
                 "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation" +
                 "&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code" +
                 "&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max" +
+                "&models=ecmwf_ifs025" +
                 "&timezone=auto&forecast_days=7"
 
         try {
@@ -81,12 +84,21 @@ class WeatherRepository {
                 .header("User-Agent", "EFrame/1.0 (Android; Linux)")
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(Exception("HTTP error ${response.code}"))
+            var response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                response.close()
+                // Fallback to default Open-Meteo blend if ECMWF query fails
+                val fallbackUrl = url.replace("&models=ecmwf_ifs025", "")
+                val fallbackReq = Request.Builder().url(fallbackUrl).header("User-Agent", "EFrame/1.0").build()
+                response = client.newCall(fallbackReq).execute()
+            }
+
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext Result.failure(Exception("HTTP error ${resp.code}"))
                 }
 
-                val body = response.body?.string().orEmpty()
+                val body = resp.body?.string().orEmpty()
                 val json = JSONObject(body)
                 val current = json.getJSONObject("current")
                 val hourly = json.optJSONObject("hourly")
@@ -99,7 +111,7 @@ class WeatherRepository {
                 val humidity = current.getInt("relative_humidity_2m")
                 val precipProbNow = current.optInt("precipitation", 0)
 
-                // Query ground observation station thermometer (e.g. Aeroparque/SABE for CABA)
+                // Query official ground observation thermometer (e.g. Aeroparque/SABE for CABA)
                 val groundObs = fetchGroundStationObservation(cityName)
                 val temp = groundObs?.first ?: modelTemp
                 val feelsLike = groundObs?.second ?: modelFeelsLike
@@ -144,15 +156,31 @@ class WeatherRepository {
                         }
 
                         val endIndex = (startIndex + 24).coerceAtMost(times.length())
+                        val modelCurrentHour = temps.optDouble(startIndex, temp)
+                        val bias = (temp - modelCurrentHour).coerceIn(-6.0, 6.0)
+
                         for (i in startIndex until endIndex) {
                             val timeStr = times.getString(i)
                             val hourRaw = timeStr.substringAfter("T").take(5)
-                            val isCurrentHour = (i == startIndex)
+                            val step = i - startIndex
+                            val isCurrentHour = (step == 0)
                             val label = if (isCurrentHour) "Ahora" else hourRaw
 
-                            // Crucial: strictly align "Ahora" with current ground observations for 100% UI consistency
-                            val hTemp = if (isCurrentHour) temp else temps.getDouble(i)
-                            val hApp = if (isCurrentHour) feelsLike else (appTemps?.optDouble(i, hTemp) ?: hTemp)
+                            // Bias decays smoothly over 6 hours from current ground observation into model physics
+                            val biasWeight = ((6.0 - step) / 6.0).coerceIn(0.0, 1.0)
+                            var hTemp = temps.getDouble(i) + (bias * biasWeight)
+                            var hApp = (appTemps?.optDouble(i, hTemp) ?: hTemp) + (bias * biasWeight)
+
+                            // Daytime physical sanity check:
+                            // On a morning warming trend, hours between 8:00 and 15:00 do not drop below current morning temp
+                            if (step > 0) {
+                                val hourInt = hourRaw.substringBefore(":").toIntOrNull() ?: 12
+                                if (hourInt in 8..15 && hTemp < temp) {
+                                    hTemp = temp
+                                    if (hApp < feelsLike) hApp = feelsLike
+                                }
+                            }
+
                             val hProb = probs?.optInt(i, 0) ?: 0
                             val hCode = codes?.optInt(i, 0) ?: 0
                             val (hCond, hEmoji) = if (isCurrentHour) Pair(condition, emoji) else mapWmoCode(hCode)
@@ -170,6 +198,10 @@ class WeatherRepository {
                         }
                     }
                 }
+
+                // Ensure maxTemp matches peak in the next 24 hours
+                val highestToday = hourlyList.take(24).maxOfOrNull { it.tempCelsius } ?: temp
+                if (highestToday > maxTemp) maxTemp = highestToday
 
                 // Parse 7 days
                 val dailyList = mutableListOf<DailyForecast>()
@@ -245,6 +277,68 @@ class WeatherRepository {
     private fun fetchGroundStationObservation(cityName: String): Pair<Double, Double>? {
         return try {
             val lower = cityName.lowercase().trim()
+            val icao = when {
+                lower.contains("buenos aires") || lower.contains("caba") ||
+                lower.contains("palermo") || lower.contains("flores") ||
+                lower.contains("caballito") || lower.contains("recoleta") ||
+                lower.contains("belgrano") || lower.contains("almagro") ||
+                lower.contains("urquiza") || lower.contains("san telmo") ||
+                lower.contains("microcentro") || lower.contains("barracas") ||
+                lower.contains("chacarita") || lower.contains("colegiales") ||
+                lower.contains("nuñez") || lower.contains("villa crespo") -> "SABE"
+                lower.contains("cordoba") || lower.contains("córdoba") -> "SACO"
+                lower.contains("rosario") -> "SAAR"
+                lower.contains("mendoza") -> "SAME"
+                lower.contains("mar del plata") -> "SAZM"
+                lower.contains("bariloche") -> "SAZS"
+                lower.contains("salta") -> "SASA"
+                lower.contains("tucuman") || lower.contains("tucumán") -> "SANT"
+                lower.contains("neuquen") || lower.contains("neuquén") -> "SAZN"
+                lower.contains("la plata") -> "SADL"
+                lower.contains("ezeiza") -> "SAEZ"
+                else -> null
+            }
+
+            // 1. Try official airport METAR station (NOAA/AviationWeather global WMO observation feed)
+            if (icao != null) {
+                try {
+                    val metarUrl = "https://aviationweather.gov/api/data/metar?ids=$icao&format=json"
+                    val request = Request.Builder()
+                        .url(metarUrl)
+                        .header("User-Agent", "EFrame/1.0 (Android; Linux)")
+                        .build()
+
+                    client.newCall(request).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val body = resp.body?.string().orEmpty()
+                            val arr = org.json.JSONArray(body)
+                            if (arr.length() > 0) {
+                                val obj = arr.getJSONObject(0)
+                                var metarTemp = obj.optDouble("temp", Double.NaN)
+                                val dewp = obj.optDouble("dewp", Double.NaN)
+                                if (!metarTemp.isNaN()) {
+                                    // CABA inland urban heat island calibration vs Aeroparque river station (+1°C for inland neighborhoods)
+                                    val isInlandCaba = lower.contains("flores") || lower.contains("caballito") ||
+                                            lower.contains("almagro") || lower.contains("villa crespo") ||
+                                            lower.contains("chacarita") || lower.contains("barracas")
+                                    if (isInlandCaba && icao == "SABE") {
+                                        metarTemp += 1.0
+                                    }
+                                    val feels = if (!dewp.isNaN()) {
+                                        // Humidex estimation
+                                        (metarTemp + (0.5555 * ((6.11 * Math.exp(5417.7530 * (1/273.16 - 1/(273.15 + dewp)))) - 10.0))).coerceAtLeast(metarTemp)
+                                    } else metarTemp
+                                    return Pair(metarTemp, feels)
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "METAR observation check failed: ${e.message}")
+                }
+            }
+
+            // 2. Fallback to wttr.in if METAR was unreachable
             val cabaNeighborhoods = setOf(
                 "palermo", "belgrano", "recoleta", "caballito", "almagro", "caba",
                 "puerto madero", "villa urquiza", "san telmo", "microcentro", "flores",
