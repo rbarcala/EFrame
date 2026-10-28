@@ -19,9 +19,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.antigravity.eframe.data.SubteLineInfo
@@ -57,9 +58,11 @@ class TransportModule(
     override fun Content(modifier: Modifier, onClick: (() -> Unit)?) {
         val scale = getUiScale()
         val isDetailed = getIsDetailed()
+        val allLines by TransportRepository.linesState.collectAsState()
 
-        val lineInfo = remember(getSelectedLine()) {
-            repository.getLineByName(getSelectedLine())
+        val lineInfo: SubteLineInfo = remember(getSelectedLine(), allLines) {
+            allLines.find { it.name.equals(getSelectedLine(), ignoreCase = true) }
+                ?: repository.getLineByName(getSelectedLine())
         }
 
         var arrivalMinutes by remember { mutableIntStateOf(2) }
@@ -71,7 +74,7 @@ class TransportModule(
                     stationName = getWaitingStation(),
                     destinationTerminal = getDestination()
                 )
-                delay(20000L) // Refresh ETA every 20 seconds
+                delay(25000L) // Refresh ETA every 25 seconds
             }
         }
 
@@ -128,9 +131,17 @@ class TransportModule(
                             .background(Color.White.copy(alpha = 0.15f))
                             .padding(horizontal = (6 * scale).dp, vertical = (2 * scale).dp)
                     ) {
+                        val badgeText = if (!lineInfo.isAlert) {
+                            "Normal"
+                        } else if (lineInfo.status.contains("cerrad", ignoreCase = true)) {
+                            "Estación en obra"
+                        } else {
+                            "Con Demoras"
+                        }
+
                         Text(
-                            text = lineInfo.status,
-                            color = if (lineInfo.status.contains("Normal")) Color(0xFF4CAF50) else Color(0xFFFFB74D),
+                            text = badgeText,
+                            color = if (!lineInfo.isAlert) Color(0xFF4CAF50) else Color(0xFFFFB74D),
                             fontSize = (10 * scale).sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -149,12 +160,24 @@ class TransportModule(
                         text = "En: ${getWaitingStation()} → Hacia: ${getDestination()}",
                         color = Color.White.copy(alpha = 0.85f),
                         fontSize = (11 * scale).sp,
-                        fontWeight = FontWeight.Normal
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (lineInfo.isAlert) {
+                    Text(
+                        text = lineInfo.status,
+                        color = Color(0xFFFFCC80),
+                        fontSize = (10 * scale).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
                 Text(
-                    text = "Tocar para ver estaciones y líneas ↗",
+                    text = "Tocar para ver estaciones y estado en vivo ↗",
                     color = Color.White.copy(alpha = 0.45f),
                     fontSize = (9 * scale).sp,
                     modifier = Modifier.padding(top = (2 * scale).dp)

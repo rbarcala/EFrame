@@ -1,5 +1,6 @@
 package com.antigravity.eframe.ui.transport
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -23,10 +24,12 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsSubway
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -35,9 +38,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +58,7 @@ import com.antigravity.eframe.data.DirectionSchedule
 import com.antigravity.eframe.data.SubteLineInfo
 import com.antigravity.eframe.data.TransportRepository
 import com.antigravity.eframe.data.UpcomingTrain
+import kotlinx.coroutines.launch
 
 @Composable
 fun SubteDetailModal(
@@ -60,12 +67,23 @@ fun SubteDetailModal(
     userWaitingStation: String,
     onDismiss: () -> Unit
 ) {
-    val allLines = remember { repository.getAllLines() }
+    val coroutineScope = rememberCoroutineScope()
+    val allLines by TransportRepository.linesState.collectAsState()
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    // Initial fetch on open
+    LaunchedEffect(Unit) {
+        isRefreshing = true
+        repository.fetchLiveStatus(force = true)
+        isRefreshing = false
+    }
+
     // Default to the line the user has in configuration
     var selectedLineName by remember { mutableStateOf(userConfiguredLineName) }
 
-    val currentLine: SubteLineInfo = remember(selectedLineName) {
-        repository.getLineByName(selectedLineName)
+    val currentLine: SubteLineInfo = remember(selectedLineName, allLines) {
+        allLines.find { it.name.equals(selectedLineName, ignoreCase = true) }
+            ?: repository.getLineByName(selectedLineName)
     }
 
     // Schedules for both directions
@@ -73,8 +91,17 @@ fun SubteDetailModal(
         repository.getUpcomingTrainsForDirections(currentLine, userWaitingStation)
     }
 
-    val closedStations = remember(currentLine) {
+    val closedStationsInCurrentLine = remember(currentLine) {
         currentLine.stations.filter { it.isClosed }
+    }
+
+    val otherClosedStations = remember(allLines, currentLine) {
+        allLines.filter { it.id != currentLine.id }
+            .flatMap { line ->
+                line.stations.filter { it.isClosed }.map { station ->
+                    Pair(line, station)
+                }
+            }
     }
 
     Dialog(
@@ -102,7 +129,7 @@ fun SubteDetailModal(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(42.dp)
                                 .clip(CircleShape)
                                 .background(currentLine.color),
                             contentAlignment = Alignment.Center
@@ -117,7 +144,7 @@ fun SubteDetailModal(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Próximos Trenes y Estado de Subtes",
+                                text = "Estado de Subtes y Próximos Trenes",
                                 color = Color.White,
                                 fontSize = 21.sp,
                                 fontWeight = FontWeight.Bold
@@ -131,7 +158,7 @@ fun SubteDetailModal(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Estación habitual configurada: $userWaitingStation",
+                                    text = "Estación habitual: $userWaitingStation",
                                     color = Color.White.copy(alpha = 0.75f),
                                     fontSize = 13.sp
                                 )
@@ -139,12 +166,39 @@ fun SubteDetailModal(
                         }
                     }
 
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Cerrar",
-                            tint = Color.White
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isRefreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                color = Color(0xFF64B5F6),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else {
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        isRefreshing = true
+                                        repository.fetchLiveStatus(force = true)
+                                        isRefreshing = false
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Actualizar ahora",
+                                    tint = Color.White.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cerrar",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
 
@@ -153,9 +207,32 @@ fun SubteDetailModal(
                     color = Color.White.copy(alpha = 0.15f)
                 )
 
+                // Subheader with Official Emova timestamp
+                if (currentLine.lastUpdated.isNotBlank()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📡 Datos en vivo • Emova (Oficial)",
+                            color = Color(0xFF81C784),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = currentLine.lastUpdated,
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
                 // 1. Selector de cada Línea (por default en la que está)
                 Text(
-                    text = "Seleccioná la línea para consultar trenes:",
+                    text = "Seleccioná la línea para consultar trenes y estado:",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
@@ -186,6 +263,15 @@ fun SubteDetailModal(
                                         text = line.name,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                     )
+                                    if (line.isAlert) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFFFB74D))
+                                        )
+                                    }
                                 }
                             },
                             colors = FilterChipDefaults.filterChipColors(
@@ -200,7 +286,7 @@ fun SubteDetailModal(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Estado de las Líneas
+                // Estado detallado de la línea seleccionada
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2432)),
                     shape = RoundedCornerShape(16.dp),
@@ -212,22 +298,33 @@ fun SubteDetailModal(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Estado de ${currentLine.name}: ${currentLine.status}",
-                                color = if (currentLine.status.contains("Normal")) Color(0xFF4CAF50) else Color(0xFFFFB74D),
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Frecuencia media: ${currentLine.frequencyMinutes} min",
-                                color = Color.White.copy(alpha = 0.7f),
-                                fontSize = 12.sp
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(if (!currentLine.isAlert) Color(0xFF4CAF50) else Color(0xFFFFB74D))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${currentLine.name}: ${currentLine.status}",
+                                    color = if (!currentLine.isAlert) Color(0xFF4CAF50) else Color(0xFFFFB74D),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            if (currentLine.frequencyMinutes > 0) {
+                                Text(
+                                    text = "Frecuencia: ${currentLine.frequencyMinutes} min",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Red general:",
+                            text = "Red general en tiempo real:",
                             color = Color.White.copy(alpha = 0.6f),
                             fontSize = 11.sp
                         )
@@ -250,7 +347,7 @@ fun SubteDetailModal(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "${line.name.replace("Línea ", "")}: ${line.status}",
-                                        color = if (line.status.contains("Normal")) Color.White.copy(alpha = 0.7f) else Color(0xFFFFB74D),
+                                        color = if (!line.isAlert) Color.White.copy(alpha = 0.7f) else Color(0xFFFFB74D),
                                         fontSize = 11.sp
                                     )
                                 }
@@ -263,7 +360,7 @@ fun SubteDetailModal(
 
                 // 2. LISTADO DE TRENES HACIA CADA DIRECCIÓN
                 Text(
-                    text = "🚆 Próximos Trenes en $userWaitingStation hacia cada dirección",
+                    text = "🚆 Próximos Trenes en $userWaitingStation (${currentLine.name})",
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
@@ -290,7 +387,7 @@ fun SubteDetailModal(
 
                 // 3. ESTACIONES DESHABILITADAS / EN OBRA
                 Text(
-                    text = "⚠️ Estaciones Deshabilitadas / Fuera de Servicio",
+                    text = "⚠️ Estaciones Deshabilitadas o Cerradas",
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
@@ -303,7 +400,7 @@ fun SubteDetailModal(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        if (closedStations.isEmpty()) {
+                        if (closedStationsInCurrentLine.isEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.CheckCircle,
@@ -319,7 +416,7 @@ fun SubteDetailModal(
                                 )
                             }
                         } else {
-                            closedStations.forEach { st ->
+                            closedStationsInCurrentLine.forEach { st ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -335,17 +432,61 @@ fun SubteDetailModal(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column {
                                         Text(
-                                            text = "Estación ${st.name} (Línea ${currentLine.name.replace("Línea ", "")})",
+                                            text = "Estación ${st.name} (${currentLine.name})",
                                             color = Color.White,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
-                                            text = st.closedReason.ifBlank { "Cerrada por obras de puesta en valor" },
+                                            text = st.closedReason.ifBlank { "Cerrada por obras de renovación integral" },
                                             color = Color(0xFFFFB74D),
                                             fontSize = 12.sp
                                         )
                                     }
+                                }
+                            }
+                        }
+
+                        // Si hay otras estaciones cerradas en el resto de la red, listarlas también
+                        if (otherClosedStations.isNotEmpty()) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 10.dp),
+                                color = Color.White.copy(alpha = 0.1f)
+                            )
+                            Text(
+                                text = "Otras estaciones cerradas en la red de Subtes:",
+                                color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            otherClosedStations.forEach { (line, st) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(line.color)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "${line.name}: Estación ${st.name}",
+                                        color = Color.White.copy(alpha = 0.9f),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "(${st.closedReason.ifBlank { "En obra" }})",
+                                        color = Color(0xFFFFB74D),
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                         }
@@ -425,8 +566,8 @@ private fun DirectionTrainsCard(
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "en ${train.minutesAway} min",
-                            color = if (idx == 0) Color(0xFF81C784) else Color.White.copy(alpha = 0.85f),
+                            text = if (train.minutesAway > 0) "en ${train.minutesAway} min" else "Interrumpido",
+                            color = if (idx == 0 && train.minutesAway > 0) Color(0xFF81C784) else Color.White.copy(alpha = 0.85f),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
