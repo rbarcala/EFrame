@@ -492,16 +492,14 @@ fun PhotoFrameScreen(
         if (showWeatherModal) {
             val weatherData by com.antigravity.eframe.data.WeatherRepository.currentWeather.collectAsState()
             val lastUpdated by com.antigravity.eframe.data.WeatherRepository.lastUpdatedTime.collectAsState()
-            if (weatherData != null) {
-                WeatherDetailModal(
-                    weather = weatherData!!,
-                    lastUpdatedTime = lastUpdated,
-                    onRefreshNow = {
-                        moduleManager.weatherModule.refreshWeather()
-                    },
-                    onDismiss = { showWeatherModal = false }
-                )
-            }
+            WeatherDetailModal(
+                weather = weatherData,
+                lastUpdatedTime = lastUpdated,
+                onRefreshNow = {
+                    moduleManager.weatherModule.refreshWeather()
+                },
+                onDismiss = { showWeatherModal = false }
+            )
         }
 
         // Fullscreen Subte Network & Stations Modal

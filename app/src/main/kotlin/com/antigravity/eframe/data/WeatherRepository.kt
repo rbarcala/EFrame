@@ -61,12 +61,7 @@ class WeatherRepository {
         val lastUpdatedTime: StateFlow<String> = _lastUpdatedTime.asStateFlow()
 
         private val client: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
-                .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
-                .build()
+            HttpClientFactory.createClient()
         }
     }
 

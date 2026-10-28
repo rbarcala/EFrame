@@ -253,12 +253,7 @@ class TransportRepository {
         private var lastFetchMillis = 0L
 
         private val httpClient: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
-                .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
-                .build()
+            HttpClientFactory.createClient()
         }
 
         private data class EmovaLineRaw(
