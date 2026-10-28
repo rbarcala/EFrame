@@ -122,6 +122,12 @@ fun PhotoFrameScreen(
         moduleManager.syncWithConfig(config)
     }
 
+    // Immediately fetch weather & subte on screen start
+    LaunchedEffect(config.weatherCity, config.weatherLatitude, config.weatherLongitude) {
+        moduleManager.weatherModule.refreshWeather()
+        transportRepository.fetchLiveStatus(force = false)
+    }
+
     var photos by remember { mutableStateOf(driveRepository.samplePhotos) }
     var currentPhotoIndex by remember { mutableIntStateOf(0) }
     var isLoadingPhotos by remember { mutableStateOf(false) }
@@ -391,9 +397,6 @@ fun PhotoFrameScreen(
                             .padding(end = 24.dp, top = 28.dp),
                         onClick = {
                             wakeUpScreen()
-                            coroutineScope.launch {
-                                moduleManager.weatherModule.refreshWeather()
-                            }
                             showWeatherModal = true
                         }
                     )
@@ -487,11 +490,11 @@ fun PhotoFrameScreen(
 
         // Fullscreen Weather Hourly & 7-Day Modal
         if (showWeatherModal) {
-            val weatherData = moduleManager.weatherModule.currentWeather.collectAsState().value
-            val lastUpdated = moduleManager.weatherModule.lastUpdatedTime.collectAsState().value
+            val weatherData by com.antigravity.eframe.data.WeatherRepository.currentWeather.collectAsState()
+            val lastUpdated by com.antigravity.eframe.data.WeatherRepository.lastUpdatedTime.collectAsState()
             if (weatherData != null) {
                 WeatherDetailModal(
-                    weather = weatherData,
+                    weather = weatherData!!,
                     lastUpdatedTime = lastUpdated,
                     onRefreshNow = {
                         moduleManager.weatherModule.refreshWeather()

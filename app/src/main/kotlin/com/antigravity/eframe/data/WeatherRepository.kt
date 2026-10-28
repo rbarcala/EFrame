@@ -2,7 +2,11 @@ package com.antigravity.eframe.data
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -47,10 +51,24 @@ data class WeatherData(
 
 class WeatherRepository {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+    companion object {
+        private const val TAG = "WeatherRepo"
+
+        private val _currentWeather = MutableStateFlow<WeatherData?>(null)
+        val currentWeather: StateFlow<WeatherData?> = _currentWeather.asStateFlow()
+
+        private val _lastUpdatedTime = MutableStateFlow<String>("")
+        val lastUpdatedTime: StateFlow<String> = _lastUpdatedTime.asStateFlow()
+
+        private val client: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
+                .build()
+        }
+    }
 
     suspend fun fetchWeather(
         cityName: String,
@@ -65,7 +83,11 @@ class WeatherRepository {
                 "&timezone=auto&forecast_days=7"
 
         try {
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "EFrame/1.0 (Android; Linux)")
+                .build()
+
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(Exception("HTTP error ${response.code}"))
@@ -82,6 +104,7 @@ class WeatherRepository {
                 val code = current.getInt("weather_code")
                 val wind = current.getDouble("wind_speed_10m")
                 val humidity = current.getInt("relative_humidity_2m")
+                val precipProbNow = current.optInt("precipitation", 0)
 
                 val (condition, emoji) = mapWmoCode(code)
 
@@ -124,13 +147,15 @@ class WeatherRepository {
                         for (i in startIndex until endIndex) {
                             val timeStr = times.getString(i)
                             val hourRaw = timeStr.substringAfter("T").take(5)
-                            val label = if (i == startIndex) "Ahora" else hourRaw
+                            val isCurrentHour = (i == startIndex)
+                            val label = if (isCurrentHour) "Ahora" else hourRaw
 
-                            val hTemp = temps.getDouble(i)
-                            val hApp = appTemps?.optDouble(i, hTemp) ?: hTemp
+                            // Crucial: strictly align "Ahora" with current observations for 100% UI consistency
+                            val hTemp = if (isCurrentHour) temp else temps.getDouble(i)
+                            val hApp = if (isCurrentHour) feelsLike else (appTemps?.optDouble(i, hTemp) ?: hTemp)
                             val hProb = probs?.optInt(i, 0) ?: 0
                             val hCode = codes?.optInt(i, 0) ?: 0
-                            val (hCond, hEmoji) = mapWmoCode(hCode)
+                            val (hCond, hEmoji) = if (isCurrentHour) Pair(condition, emoji) else mapWmoCode(hCode)
 
                             hourlyList.add(
                                 HourlyForecast(
@@ -155,18 +180,19 @@ class WeatherRepository {
                     val dCodes = daily.optJSONArray("weather_code")
                     val dProbs = daily.optJSONArray("precipitation_probability_max")
 
-                    val inFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                    val outFormat = SimpleDateFormat("EEEE d", Locale("es", "ES"))
+                    val dayParser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                    val dayNameFormat = SimpleDateFormat("EEE d", Locale("es", "AR"))
 
                     if (days != null && maxs != null && mins != null) {
-                        for (i in 0 until days.length()) {
-                            val dateStr = days.getString(i)
-                            val dayLabel = try {
-                                val d = inFormat.parse(dateStr)
-                                if (i == 0) "Hoy" else if (i == 1) "Mañana" else if (d != null) outFormat.format(d).replaceFirstChar { it.uppercase() } else dateStr
+                        for (i in 0 until days.length().coerceAtMost(7)) {
+                            val rawDate = days.getString(i)
+                            val dName = try {
+                                val d = dayParser.parse(rawDate)
+                                if (i == 0) "Hoy" else dayNameFormat.format(d ?: Date()).replaceFirstChar { it.uppercase() }
                             } catch (e: Exception) {
-                                dateStr
+                                if (i == 0) "Hoy" else "Día ${i + 1}"
                             }
+
                             val dMax = maxs.getDouble(i)
                             val dMin = mins.getDouble(i)
                             val dCode = dCodes?.optInt(i, 0) ?: 0
@@ -175,7 +201,7 @@ class WeatherRepository {
 
                             dailyList.add(
                                 DailyForecast(
-                                    dayName = dayLabel,
+                                    dayName = dName,
                                     tempMin = dMin,
                                     tempMax = dMax,
                                     iconEmoji = dEmoji,
@@ -187,74 +213,33 @@ class WeatherRepository {
                     }
                 }
 
-                val currentRainProb = hourlyList.firstOrNull()?.precipitationProb ?: 0
-
-                Result.success(
-                    WeatherData(
-                        cityName = cityName,
-                        temperatureCelsius = temp,
-                        feelsLikeCelsius = feelsLike,
-                        conditionText = condition,
-                        iconEmoji = emoji,
-                        tempMax = maxTemp,
-                        tempMin = minMin(minTemp, temp),
-                        windSpeedKmh = wind,
-                        humidityPercent = humidity,
-                        precipitationProbCurrent = currentRainProb,
-                        hourlyList = hourlyList,
-                        dailyList = dailyList
-                    )
+                val resultData = WeatherData(
+                    cityName = cityName,
+                    temperatureCelsius = temp,
+                    feelsLikeCelsius = feelsLike,
+                    conditionText = condition,
+                    iconEmoji = emoji,
+                    tempMax = maxTemp,
+                    tempMin = minTemp,
+                    windSpeedKmh = wind,
+                    humidityPercent = humidity,
+                    precipitationProbCurrent = precipProbNow,
+                    hourlyList = hourlyList,
+                    dailyList = dailyList
                 )
+
+                // Update single source of truth StateFlow
+                _currentWeather.value = resultData
+                val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                _lastUpdatedTime.value = timeStr
+
+                Log.d(TAG, "Weather updated for $cityName: ${temp.toInt()}°C, $condition ($timeStr)")
+                Result.success(resultData)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching weather data", e)
-            Result.success(generateFallbackWeather(cityName))
+            Log.e(TAG, "Error fetching weather: ${e.message}", e)
+            Result.failure(e)
         }
-    }
-
-    private fun minMin(a: Double, b: Double): Double = if (a < b) a else b
-
-    private fun generateFallbackWeather(cityName: String): WeatherData {
-        val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        val sampleHourly = (0 until 24).map { offset ->
-            val h = (currentHour + offset) % 24
-            val label = if (offset == 0) "Ahora" else String.format("%02d:00", h)
-            val isDay = h in 7..20
-            HourlyForecast(
-                timeLabel = label,
-                tempCelsius = 19.0 + (h % 7),
-                feelsLikeCelsius = 19.0 + (h % 7),
-                precipitationProb = if (h in 15..19) 35 else 0,
-                iconEmoji = if (isDay) "🌤️" else "🌙",
-                conditionText = if (isDay) "Parcialmente nublado" else "Despejado"
-            )
-        }
-
-        val sampleDaily = listOf("Hoy", "Mañana", "Viernes", "Sábado", "Domingo", "Lunes", "Martes").map { day ->
-            DailyForecast(
-                dayName = day,
-                tempMin = 15.0,
-                tempMax = 25.0,
-                iconEmoji = "☀️",
-                conditionText = "Agradable",
-                rainProbMax = 10
-            )
-        }
-
-        return WeatherData(
-            cityName = cityName,
-            temperatureCelsius = 22.0,
-            feelsLikeCelsius = 23.0,
-            conditionText = "Despejado",
-            iconEmoji = "☀️",
-            tempMax = 26.0,
-            tempMin = 16.0,
-            windSpeedKmh = 14.0,
-            humidityPercent = 52,
-            precipitationProbCurrent = 10,
-            hourlyList = sampleHourly,
-            dailyList = sampleDaily
-        )
     }
 
     private fun mapWmoCode(code: Int): Pair<String, String> {
@@ -265,15 +250,18 @@ class WeatherRepository {
             3 -> Pair("Nublado", "☁️")
             45, 48 -> Pair("Niebla", "🌫️")
             51, 53, 55 -> Pair("Llovizna", "🌦️")
-            61, 63, 65 -> Pair("Lluvia", "🌧️")
-            71, 73, 75 -> Pair("Nieve", "❄️")
-            80, 81, 82 -> Pair("Chubascos", "🌧️")
-            95, 96, 99 -> Pair("Tormenta eléctrica", "⛈️")
-            else -> Pair("Clima templado", "🌤️")
+            56, 57 -> Pair("Llovizna helada", "🌧️")
+            61 -> Pair("Lluvia leve", "🌧️")
+            63 -> Pair("Lluvia moderada", "🌧️")
+            65 -> Pair("Lluvia fuerte", "🌧️")
+            66, 67 -> Pair("Lluvia helada", "🌧️")
+            71, 73, 75 -> Pair("Nevada", "❄️")
+            77 -> Pair("Granizo fino", "🌨️")
+            80, 81, 82 -> Pair("Chaparrones", "🌦️")
+            85, 86 -> Pair("Chaparrones de nieve", "🌨️")
+            95 -> Pair("Tormenta eléctrica", "⛈️")
+            96, 99 -> Pair("Tormenta con granizo", "⛈️")
+            else -> Pair("Parcialmente nublado", "⛅")
         }
-    }
-
-    companion object {
-        private const val TAG = "WeatherRepository"
     }
 }
